@@ -1,0 +1,198 @@
+# 14.satırı değiştirin: TARGET="example.com"  chmod +x scan.sh  sudo ./scan.sh
+
+
+#!/bin/bash
+
+# Renkli çıktı için
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Hedef ve çıktı dizini
+TARGET="example.com"
+OUTPUT_DIR="scan_results_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$OUTPUT_DIR"
+
+# Log fonksiyonu
+log() {
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[HATA]${NC} $1"
+}
+
+warning() {
+    echo -e "${YELLOW}[UYARI]${NC} $1"
+}
+
+info() {
+    echo -e "${BLUE}[BİLGİ]${NC} $1"
+}
+
+# Root kontrolü
+if [[ $EUID -ne 0 ]]; then
+   warning "Bu script root yetkisiyle çalıştırılmalıdır (sudo)"
+fi
+
+# Nmap kontrolü
+if ! command -v nmap &> /dev/null; then
+    error "Nmap yüklü değil. Lütfen yükleyin: sudo apt install nmap"
+    exit 1
+fi
+
+echo ""
+echo "=========================================="
+echo "  NMAP GÜVENLİK TARAMA ARACI"
+echo "  Hedef: $TARGET"
+echo "  Çıktı: $OUTPUT_DIR"
+echo "=========================================="
+echo ""
+
+# 1. Hızlı Port Keşfi
+log "1. Hızlı port keşfi yapılıyor..."
+nmap -T4 -F $TARGET -oN "$OUTPUT_DIR/01_quick_scan.txt" -oX "$OUTPUT_DIR/01_quick_scan.xml"
+
+# 2. Temel SYN Tarama ve Servis Tespiti
+log "2. Temel SYN taraması ve servis versiyonları tespit ediliyor..."
+nmap -sS -sV -O --osscan-guess $TARGET -oN "$OUTPUT_DIR/02_basic_scan.txt" -oX "$OUTPUT_DIR/02_basic_scan.xml"
+
+# 3. Tüm Portları Tarama
+log "3. Tüm TCP portları taranıyor (bu uzun sürebilir)..."
+nmap -p- -T4 $TARGET -oN "$OUTPUT_DIR/03_all_ports.txt" -oX "$OUTPUT_DIR/03_all_ports.xml"
+
+# 4. SSH Detaylı Tarama
+log "4. SSH detaylı analiz yapılıyor..."
+nmap -p 22 --script ssh2-enum-algos,ssh-hostkey,ssh-auth-methods,sshv1 $TARGET \
+    -oN "$OUTPUT_DIR/04_ssh_detailed.txt" -oX "$OUTPUT_DIR/04_ssh_detailed.xml"
+
+# 5. Yaygın Servislerin Detaylı Taraması
+log "5. Yaygın servisler detaylı taranıyor..."
+nmap -sV -sC -p 21,22,23,25,53,80,110,111,135,139,143,443,445,993,995,1723,3306,3389,5900,8080 $TARGET \
+    -oN "$OUTPUT_DIR/05_common_services.txt" -oX "$OUTPUT_DIR/05_common_services.xml"
+
+# 6. UDP Tarama (Yavaş)
+log "6. UDP port taraması yapılıyor (yavaş olabilir)..."
+nmap -sU --top-ports 100 $TARGET -oN "$OUTPUT_DIR/06_udp_scan.txt" -oX "$OUTPUT_DIR/06_udp_scan.xml"
+
+# 7. Güvenlik Açığı Taraması
+log "7. Güvenlik açıkları taranıyor..."
+nmap --script vuln $TARGET -oN "$OUTPUT_DIR/07_vuln_scan.txt" -oX "$OUTPUT_DIR/07_vuln_scan.xml"
+
+# 8. SMB Taraması (Eğer 445 açıksa)
+log "8. SMB/CIFS servisleri kontrol ediliyor..."
+nmap -p 445 --script smb-enum-shares,smb-enum-users,smb-os-discovery,smb-protocols,smb-security-mode $TARGET \
+    -oN "$OUTPUT_DIR/08_smb_scan.txt" -oX "$OUTPUT_DIR/08_smb_scan.xml" 2>/dev/null
+
+# 9. Web Servisleri Taraması
+log "9. Web servisleri analiz ediliyor..."
+nmap -p 80,443,8080,8443 --script http-enum,http-headers,http-methods,http-title,http-server-header $TARGET \
+    -oN "$OUTPUT_DIR/09_web_scan.txt" -oX "$OUTPUT_DIR/09_web_scan.xml" 2>/dev/null
+
+# 10. FTP Taraması
+log "10. FTP servisi kontrol ediliyor..."
+nmap -p 21 --script ftp-anon,ftp-bounce,ftp-syst,ftp-vsftpd-backdoor $TARGET \
+    -oN "$OUTPUT_DIR/10_ftp_scan.txt" -oX "$OUTPUT_DIR/10_ftp_scan.xml" 2>/dev/null
+
+# 11. MySQL/Database Taraması
+log "11. Veritabanı servisleri kontrol ediliyor..."
+nmap -p 1433,3306,5432 --script mysql-info,mysql-empty-password,ms-sql-info,pgsql-brute $TARGET \
+    -oN "$OUTPUT_DIR/11_database_scan.txt" -oX "$OUTPUT_DIR/11_database_scan.xml" 2>/dev/null
+
+# 12. SSL/TLS Güvenlik Analizi
+log "12. SSL/TLS güvenlik analizi yapılıyor..."
+nmap -p 443,8443 --script ssl-cert,ssl-enum-ciphers,ssl-heartbleed,ssl-poodle,ssl-dh-params $TARGET \
+    -oN "$OUTPUT_DIR/12_ssl_scan.txt" -oX "$OUTPUT_DIR/12_ssl_scan.xml" 2>/dev/null
+
+# 13. Firewall/IDS Tespiti
+log "13. Firewall ve IDS tespiti yapılıyor..."
+nmap -sA -T4 $TARGET -oN "$OUTPUT_DIR/13_firewall_detection.txt" -oX "$OUTPUT_DIR/13_firewall_detection.xml"
+
+# 14. Script Taraması (Agresif)
+log "14. Agresif script taraması yapılıyor..."
+nmap -sV --script=default,discovery,exploit $TARGET \
+    -oN "$OUTPUT_DIR/14_aggressive_scripts.txt" -oX "$OUTPUT_DIR/14_aggressive_scripts.xml" 2>/dev/null
+
+# 15. Traceroute
+log "15. Traceroute analizi yapılıyor..."
+nmap --traceroute $TARGET -oN "$OUTPUT_DIR/15_traceroute.txt" -oX "$OUTPUT_DIR/15_traceroute.xml"
+
+# Özet Rapor Oluşturma
+log "Özet rapor hazırlanıyor..."
+
+cat > "$OUTPUT_DIR/00_OZET_RAPOR.txt" << EOF
+========================================
+NMAP TARAMA ÖZET RAPORU
+========================================
+Hedef: $TARGET
+Tarih: $(date)
+Tarama Süresi: $SECONDS saniye
+
+========================================
+1. AÇIK PORTLAR
+========================================
+EOF
+
+grep -h "^[0-9]" "$OUTPUT_DIR"/*.txt | grep "open" | sort -u >> "$OUTPUT_DIR/00_OZET_RAPOR.txt"
+
+cat >> "$OUTPUT_DIR/00_OZET_RAPOR.txt" << EOF
+
+========================================
+2. TESPİT EDİLEN SERVİSLER
+========================================
+EOF
+
+grep -h "^[0-9]" "$OUTPUT_DIR"/*.txt | grep -v "filtered\|closed" | sort -u >> "$OUTPUT_DIR/00_OZET_RAPOR.txt"
+
+cat >> "$OUTPUT_DIR/00_OZET_RAPOR.txt" << EOF
+
+========================================
+3. GÜVENLİK AÇIKLIKLARI
+========================================
+EOF
+
+grep -h "VULNERABLE" "$OUTPUT_DIR"/*.txt >> "$OUTPUT_DIR/00_OZET_RAPOR.txt" 2>/dev/null || echo "Kritik güvenlik açığı tespit edilmedi." >> "$OUTPUT_DIR/00_OZET_RAPOR.txt"
+
+cat >> "$OUTPUT_DIR/00_OZET_RAPOR.txt" << EOF
+
+========================================
+4. ÖNERİLER
+========================================
+- Gereksiz servisleri kapatın
+- Güncel olmayan yazılımları güncelleyin
+- Güçlü şifreler kullanın
+- Firewall kurallarını gözden geçirin
+- SSL/TLS konfigürasyonunu sıkılaştırın
+- Düzenli güvenlik taraması yapın
+
+========================================
+TARAMA TAMAMLANDI
+========================================
+EOF
+
+echo ""
+info "=========================================="
+info "TARAMA TAMAMLANDI!"
+info "Toplam süre: $SECONDS saniye"
+info "Sonuçlar: $OUTPUT_DIR/"
+info "Özet rapor: $OUTPUT_DIR/00_OZET_RAPOR.txt"
+info "=========================================="
+echo ""
+
+# Özet raporu göster
+cat "$OUTPUT_DIR/00_OZET_RAPOR.txt"
+
+# HTML rapor oluştur (opsiyonel)
+if command -v xsltproc &> /dev/null; then
+    log "HTML rapor oluşturuluyor..."
+    for xml_file in "$OUTPUT_DIR"/*.xml; do
+        if [ -f "$xml_file" ]; then
+            html_file="${xml_file%.xml}.html"
+            xsltproc "$xml_file" -o "$html_file" 2>/dev/null
+        fi
+    done
+fi
+
+exit 0
