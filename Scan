@@ -11,7 +11,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Hedef ve çıktı dizini
-TARGET="example.com"
+TARGET="example.com" 
 OUTPUT_DIR="scan_results_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$OUTPUT_DIR"
 
